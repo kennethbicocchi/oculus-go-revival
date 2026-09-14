@@ -17,7 +17,7 @@ $ adb shell dumpsys bluetooth_manager | grep -A 4 HidService
 Profile: HidService
   mTargetDevice: null
   mInputDevices:
-    58:A0:23:71:7C:84 : 2        <- 2 = STATE_CONNECTED
+    XX:XX:XX:XX:XX:XX : 2        <- 2 = STATE_CONNECTED
 ```
 
 Both L2CAP channels open cleanly — PSM 17 (control) and PSM 19 (interrupt) —
@@ -128,7 +128,7 @@ Lost controllers stay bonded through factory resets. From
 `/data/misc/bluedroid/bt_config.conf`:
 
 ```
-[2c:26:17:16:4f:ef]
+[XX:XX:XX:XX:XX:XX]
 Name = OMVR-V190
 DevType = 2      (BLE)
 AddrType = 0     (public)

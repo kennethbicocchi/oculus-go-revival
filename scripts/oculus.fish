@@ -58,3 +58,11 @@ function ocuservice --description "Did the autostart service run? Check fork/exi
     adb shell "dmesg | grep -i ocubrowser"
 end
 funcsave ocuservice
+
+function ocusettings --description "Open the real Android settings panel"
+    # Not reachable from the Oculus shell. Works because Settings is a
+    # privileged system app — the same command on a sideloaded app injects
+    # the event but starts nothing.
+    adb shell monkey -p com.android.settings -c android.intent.category.LAUNCHER 1
+end
+funcsave ocusettings

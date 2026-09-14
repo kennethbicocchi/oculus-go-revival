@@ -183,6 +183,18 @@ sends events the VR compositor cannot handle, the screen goes black and
 pages (it moves focus between elements; there is no pointer) and does nothing
 inside WebXR sessions.
 
+**The real Android settings panel.** Not reachable from the Oculus shell, but
+`monkey` opens it:
+
+```bash
+adb shell monkey -p com.android.settings -c android.intent.category.LAUNCHER 1
+```
+
+Wi-Fi, Bluetooth, Display, Apps and Notifications are all there. Account,
+Security, Users and Developer Options have been stripped out by Meta. Note
+this works because Settings is a privileged system app — the same command on
+a sideloaded app injects the event but starts nothing.
+
 **Screenshots**, including in immersive mode:
 
 ```bash
