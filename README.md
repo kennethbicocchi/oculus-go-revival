@@ -178,7 +178,7 @@ Works on any browser that registers a `VIEW` intent:
 
 ```bash
 adb shell am start -a android.intent.action.VIEW -d "https://example.com" \
-  -n org.mozilla.vrbrowser/org.mozilla.vrbrowser.VRBrowserActivity
+  -n com.oculus.browser/.WebVRActivity
 ```
 
 ---
