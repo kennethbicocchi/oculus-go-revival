@@ -1,4 +1,5 @@
 # Oculus Go Revival — MH-A32 (`pacific`)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/kennethbicocchi)
 
 Bringing a dead Oculus Go back to life in 2026: unlocked bootloader, root,
 working SELinux, auto-starting browser, real-time keyboard input — **without
