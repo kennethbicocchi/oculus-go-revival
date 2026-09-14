@@ -1,0 +1,22 @@
+# /init.oculus.properties.rc  —  patched
+#
+# The last three stanzas are the addition. The first is stock.
+#
+# seclabel u:r:shell:s0 is the only domain that works here:
+#   u:r:su:s0    -> "Service does not have a SELinux domain defined"
+#   u:r:init:s0  -> avc: denied { execute_no_trans }
+# and /system/bin/sh is the only valid entrypoint for that domain
+# (logwrapper gives avc: denied { entrypoint }).
+
+on early-boot
+    exec - system system -- /system/bin/init.oculus.properties.sh
+
+on property:sys.boot_completed=1
+    start ocubrowser
+
+service ocubrowser /system/bin/sh /system/bin/init.oculus.properties.sh autostart
+    user root
+    group root
+    disabled
+    oneshot
+    seclabel u:r:shell:s0

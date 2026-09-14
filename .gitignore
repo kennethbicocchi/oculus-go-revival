@@ -1,0 +1,7 @@
+# Never commit device images
+*.img
+*.img.SAFE
+*.zip
+*.btsnoop
+sysmount/
+magisk_extract/
