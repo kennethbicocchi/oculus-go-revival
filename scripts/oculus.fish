@@ -66,3 +66,34 @@ function ocusettings --description "Open the real Android settings panel"
     adb shell monkey -p com.android.settings -c android.intent.category.LAUNCHER 1
 end
 funcsave ocusettings
+
+function ocuapp --description "Launch a sideloaded app fullscreen. Usage: ocuapp pkg/.Activity"
+    # adb root is mandatory: from the shell user this fails with
+    #   SecurityException: Permission Denial ... not exported from uid 10054
+    # am stack start 0 forces display 0 — scrcpy creates a secondary display
+    # and some apps launch onto it invisibly. Android 7.1 has no
+    # `am start --display`.
+    adb root
+    sleep 3
+    adb shell am stack start 0 -n $argv[1]
+end
+funcsave ocuapp
+
+function ocuurl --description "Open a URL in the Oculus browser. Usage: ocuurl https://..."
+    adb shell am start -a android.intent.action.VIEW -d "$argv[1]" \
+        -n com.oculus.browser/.WebVRActivity
+end
+funcsave ocuurl
+
+function ocufocus --description "Which window currently has focus"
+    # Check this before blaming tap coordinates. If focus is on
+    # com.oculus.vrshell, input events will not reach the app.
+    # Also: a sleeping display swallows every event silently.
+    adb shell dumpsys window windows | grep mCurrentFocus
+end
+funcsave ocufocus
+
+function ocudisplay --description "List display ids — scrcpy adds a secondary one"
+    adb shell 'dumpsys window displays | grep -E "Display:|init="'
+end
+funcsave ocudisplay
