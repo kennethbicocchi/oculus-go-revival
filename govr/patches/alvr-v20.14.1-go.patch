@@ -1,0 +1,156 @@
+diff --git a/alvr/client_core/Cargo.toml b/alvr/client_core/Cargo.toml
+index 364f0d7..880de78 100644
+--- a/alvr/client_core/Cargo.toml
++++ b/alvr/client_core/Cargo.toml
+@@ -10,6 +10,9 @@ license.workspace = true
+ crate-type = ["rlib", "staticlib", "cdylib"]
+ 
+ [features]
++# Oculus Go (Android 7.1, API 25): no AAudio, no AImageReader/AHardwareBuffer. The app
++# supplies its own decoder (alvr_set_decoder_input_callback) and audio path.
++go = []
+ link-stdcpp-shared = []
+ default = ["link-stdcpp-shared"]
+ 
+@@ -30,7 +33,7 @@ serde_json = "1"
+ 
+ [target.'cfg(target_os = "android")'.dependencies]
+ android_logger = "0.14"
+-ndk = { version = "0.9", features = ["api-level-26", "audio", "media"] }
++ndk = { version = "0.9", features = ["media"] }  # GoVR: no AAudio (API 26)
+ ndk-context = "0.1"
+ 
+ [target.'cfg(not(target_os = "android"))'.dependencies]
+diff --git a/alvr/client_core/src/audio.rs b/alvr/client_core/src/audio.rs
+index f5e9bd4..23de47b 100644
+--- a/alvr/client_core/src/audio.rs
++++ b/alvr/client_core/src/audio.rs
+@@ -5,6 +5,7 @@ use alvr_common::{
+ };
+ use alvr_session::AudioBufferingConfig;
+ use alvr_sockets::{StreamReceiver, StreamSender};
++#[cfg(not(feature = "go"))]
+ use ndk::audio::{
+     AudioCallbackResult, AudioDirection, AudioError, AudioFormat, AudioPerformanceMode,
+     AudioSharingMode, AudioStreamBuilder,
+@@ -19,6 +20,7 @@ use std::{
+ const INPUT_SAMPLES_MAX_BUFFER_COUNT: usize = 20;
+ const INPUT_RECV_TIMEOUT: Duration = Duration::from_millis(20);
+ 
++#[cfg(not(feature = "go"))]
+ #[allow(unused_variables)]
+ pub fn record_audio_blocking(
+     is_running: Arc<dyn Fn() -> bool + Send + Sync>,
+@@ -94,6 +96,7 @@ pub fn record_audio_blocking(
+ }
+ 
+ #[allow(unused_variables)]
++#[cfg(not(feature = "go"))]
+ pub fn play_audio_loop(
+     is_running: impl Fn() -> bool,
+     device: &AudioDevice,
+@@ -181,3 +184,34 @@ pub fn play_audio_loop(
+ 
+     Ok(())
+ }
++
++// GoVR (Oculus Go, Android 7.1): AAudio does not exist. Game audio reaches the headset through
++// the GoVR Opus channel instead (see go-vr DECISIONS.md D-012), so these are no-ops.
++#[cfg(feature = "go")]
++#[allow(unused_variables)]
++pub fn record_audio_blocking(
++    is_running: Arc<dyn Fn() -> bool + Send + Sync>,
++    sender: StreamSender<()>,
++    device: &AudioDevice,
++    channels_count: u16,
++    mute: bool,
++) -> Result<()> {
++    bail!("microphone not supported on the Oculus Go build")
++}
++
++#[cfg(feature = "go")]
++#[allow(unused_variables)]
++pub fn play_audio_loop(
++    is_running: impl Fn() -> bool,
++    device: &AudioDevice,
++    channels_count: u16,
++    sample_rate: u32,
++    config: AudioBufferingConfig,
++    receiver: &mut StreamReceiver<()>,
++) -> Result<()> {
++    // Drain and discard, so the stream stays healthy if the server still sends audio.
++    while is_running() {
++        receiver.recv(Duration::from_millis(100)).ok();
++    }
++    Ok(())
++}
+diff --git a/alvr/client_core/src/video_decoder/mod.rs b/alvr/client_core/src/video_decoder/mod.rs
+index 3a1555c..fc26fed 100644
+--- a/alvr/client_core/src/video_decoder/mod.rs
++++ b/alvr/client_core/src/video_decoder/mod.rs
+@@ -1,4 +1,4 @@
+-#[cfg(target_os = "android")]
++#[cfg(all(target_os = "android", not(feature = "go")))]
+ mod android;
+ 
+ use alvr_common::anyhow::Result;
+@@ -16,7 +16,7 @@ pub struct VideoDecoderConfig {
+ }
+ 
+ pub struct VideoDecoderSink {
+-    #[cfg(target_os = "android")]
++    #[cfg(all(target_os = "android", not(feature = "go")))]
+     inner: android::VideoDecoderSink,
+ }
+ 
+@@ -24,28 +24,28 @@ impl VideoDecoderSink {
+     // returns true if frame has been successfully enqueued
+     #[allow(unused_variables)]
+     pub fn push_nal(&mut self, timestamp: Duration, nal: &[u8]) -> bool {
+-        #[cfg(target_os = "android")]
++        #[cfg(all(target_os = "android", not(feature = "go")))]
+         {
+             alvr_common::show_err(self.inner.push_frame_nal(timestamp, nal)).unwrap_or(false)
+         }
+-        #[cfg(not(target_os = "android"))]
++        #[cfg(not(all(target_os = "android", not(feature = "go"))))]
+         false
+     }
+ }
+ 
+ pub struct VideoDecoderSource {
+-    #[cfg(target_os = "android")]
++    #[cfg(all(target_os = "android", not(feature = "go")))]
+     inner: android::VideoDecoderSource,
+ }
+ 
+ impl VideoDecoderSource {
+     /// If a frame is available, return the timestamp and the AHardwareBuffer.
+     pub fn get_frame(&mut self) -> Option<(Duration, *mut std::ffi::c_void)> {
+-        #[cfg(target_os = "android")]
++        #[cfg(all(target_os = "android", not(feature = "go")))]
+         {
+             self.inner.dequeue_frame()
+         }
+-        #[cfg(not(target_os = "android"))]
++        #[cfg(not(all(target_os = "android", not(feature = "go"))))]
+         None
+     }
+ }
+@@ -56,7 +56,7 @@ pub fn create_decoder(
+     config: VideoDecoderConfig,
+     report_frame_decoded: impl Fn(Result<Duration>) + Send + Sync + 'static,
+ ) -> (VideoDecoderSink, VideoDecoderSource) {
+-    #[cfg(target_os = "android")]
++    #[cfg(all(target_os = "android", not(feature = "go")))]
+     {
+         let (sink, source) = android::video_decoder_split(
+             config.clone(),
+@@ -70,6 +70,6 @@ pub fn create_decoder(
+             VideoDecoderSource { inner: source },
+         )
+     }
+-    #[cfg(not(target_os = "android"))]
++    #[cfg(not(all(target_os = "android", not(feature = "go"))))]
+     (VideoDecoderSink {}, VideoDecoderSource {})
+ }

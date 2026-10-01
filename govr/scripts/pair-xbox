@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# pair-xbox: (re)pair the Xbox controller with the PC over Bluetooth.
+# 1) turn the controller on  2) hold its small pair button until the Xbox logo flashes FAST
+# 3) run: pair-xbox <MAC>   (it waits up to 2 minutes; MAC from `bluetoothctl devices`)
+# An Xbox controller remembers one Bluetooth host: pairing it with the Go removes the PC and
+# vice versa. A USB-C cable to the PC avoids all of this.
+set -uo pipefail
+M="${1:?usage: pair-xbox <controller-bluetooth-MAC> (see: bluetoothctl devices)}"
+bluetoothctl remove "$M" >/dev/null 2>&1; sleep 1
+echo "waiting for the controller in pairing mode (logo flashing fast)..."
+bluetoothctl --timeout 120 scan on >/dev/null 2>&1 &
+for i in $(seq 40); do
+  if bluetoothctl devices | grep -q "$M"; then
+    bluetoothctl pair "$M" >/dev/null 2>&1
+    bluetoothctl trust "$M" >/dev/null 2>&1
+    if bluetoothctl connect "$M" 2>&1 | grep -q successful; then
+      echo "connected: $(bluetoothctl info "$M" | grep -m1 Name:)"; exit 0
+    fi
+  fi
+  sleep 3
+done
+echo "not connected — is the logo flashing fast? Or use a USB-C cable."; exit 1

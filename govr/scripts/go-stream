@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# go-stream [server args...]: wake the headset, start the PC server, launch the client.
+# Examples:
+#   go-stream                         # test pattern (Phase 4 check)
+#   go-stream --source pipewire ...   # desktop (see go-desktop)
+# Ctrl+C stops the server; the client keeps running and reconnects to the next server.
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+"$GO_ROOT/scripts/go-up" >/dev/null
+adb reverse tcp:9950 tcp:9950 >/dev/null
+"$GO_ROOT/.venv-srv/bin/python" "$GO_ROOT/pc/govr_server.py" --no-adb --log "$LOGS/stream-$(ts).txt" "$@" &
+srv=$!
+trap 'kill $srv 2>/dev/null' EXIT
+sleep 1
+focus=$(adb shell dumpsys window windows | grep mCurrentFocus)
+[[ "$focus" == *com.govr.client* ]] || "$GO_ROOT/scripts/go-launch" com.govr.client/.MainActivity >/dev/null
+wait $srv

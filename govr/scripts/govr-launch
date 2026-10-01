@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# govr-launch <desktop|vr|nms|youtube|stop> | video <url-or-file> <layout>: one-click entry point used by the KDE menu
+# launchers ("GoVR ..."). Stops whatever GoVR session is running, starts the new one in the
+# background, and reports with desktop notifications (no terminal needed).
+set -uo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"; LOG="$ROOT/logs/launcher.log"
+mode="${1:-desktop}"
+note() { notify-send -a GoVR -i video-display "GoVR" "$1"; }
+fail() { kdialog --title GoVR --error "$1"; exit 1; }
+
+if [[ "$mode" != stop ]] && ! adb get-state >/dev/null 2>&1; then
+  fail "Visore non trovato.\n\nAccendi l'Oculus Go e collegalo al PC con il cavo USB, poi riprova."
+fi
+
+url=""
+if [[ "$mode" == video ]]; then   # non-interactive (used by the GoVR panel)
+  url="${2:-}"; layout="${3:-360}"; mode=youtube
+  [[ -n "$url" ]] || fail "Nessun link o file indicato."
+elif [[ "$mode" == youtube ]]; then
+  url=$(kdialog --title "GoVR — Video VR" --inputbox "Incolla il link del video (YouTube, Vimeo, altri siti, link a un file .mp4) oppure il percorso di un file sul PC:") || exit 0
+  [[ -n "$url" ]] || exit 0
+  layout=$(kdialog --title "GoVR — Formato" --radiolist "Che formato è il video?\n(Puoi cambiarlo anche durante la visione: tasto X del gamepad o Meta+Alt+F)" \
+    360 "360° normale" on 360tb "360° 3D (immagine sopra/sotto)" off 180 "180° normale" off \
+    180sbs "180° 3D / VR180 (immagini affiancate)" off flat "Video normale (schermo cinema)" off) || exit 0
+fi
+
+note "Chiudo la sessione precedente…"
+"$ROOT/scripts/go-stop" --steamvr >>"$LOG" 2>&1
+sleep 2
+echo "=== $(date) $mode $url" >>"$LOG"
+case "$mode" in
+  desktop) nohup setsid "$ROOT/scripts/go-start" desktop >>"$LOG" 2>&1 < /dev/null &
+           note "Desktop nel visore: avvio in corso (circa 10 secondi)." ;;
+  vr)      nohup setsid "$ROOT/scripts/go-start" vr >>"$LOG" 2>&1 < /dev/null &
+           note "SteamVR: avvio in corso (circa 30 secondi). Poi avvia il gioco." ;;
+  nms)     nohup setsid "$ROOT/scripts/go-start" vr >>"$LOG" 2>&1 < /dev/null &
+           note "SteamVR in avvio, poi No Man's Sky in modalità VR (circa 1-2 minuti)."
+           ( for i in $(seq 60); do pgrep -x vrserver >/dev/null && break; sleep 2; done; sleep 15
+             "$ROOT/scripts/go-play" nms >>"$LOG" 2>&1 ) & ;;
+  youtube) nohup setsid "$ROOT/scripts/go-360" "$url" --layout "$layout" >>"$LOG" 2>&1 < /dev/null &
+           note "Video in caricamento nel visore (circa 10-20 secondi). Gamepad: A pausa, LB/RB -/+5 s, croce -/+30 s, X formato, Y ricentra." ;;
+  stop)    note "GoVR chiuso. Audio di nuovo sul PC." ;;
+  *)       fail "Modalità sconosciuta: $mode" ;;
+esac

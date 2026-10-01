@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# go-launch <package/.Activity>: start an app fullscreen on display 0 (as root).
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+[[ $# -ge 1 ]] || die "usage: go-launch package/.Activity"
+"$(dirname "$0")/go-up" >/dev/null
+# am stack start 0 forces display 0 (scrcpy adds a secondary display)
+adb shell am stack start 0 -n "$1"
+sleep 3
+adb shell dumpsys window windows | grep mCurrentFocus

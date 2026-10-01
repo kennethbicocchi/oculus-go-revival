@@ -1,0 +1,14 @@
+toolchain/
+build/
+logs/
+shots/
+scratch/
+state/
+backups/
+re/
+ref/
+keystore/
+.venv/
+.venv-srv/
+*.apk
+__pycache__/

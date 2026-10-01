@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# go-up [--keep-awake]: get root, wake the headset, report battery.
+#
+# Default ("worn" mode): the Oculus power logic works as shipped — the proximity sensor
+# decides, and the headset sleeps when you take it off. This is what you want in daily use:
+# a USB 2.0 port cannot supply what the Go draws with the display on, so a headset left
+# awake on the desk drains its battery (that is how it shut down on 2026-10-01).
+#
+# --keep-awake (or GOVR_KEEP_AWAKE=1): testing without wearing it. Fakes "headset on face"
+# and disables motion-idle sleep (DECISIONS.md D-002, D-013). Watch the battery.
+#
+# Safe to run repeatedly. Never restarts adbd while scrcpy is running.
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+keep_awake="${GOVR_KEEP_AWAKE:-0}"
+[[ "${1:-}" == --keep-awake ]] && keep_awake=1
+
+adb wait-for-device
+if ! is_root; then
+  scrcpy_running && die "scrcpy is running: close it before adb root (it would break vrshell)"
+  adb root >/dev/null; sleep 3; adb wait-for-device
+fi
+is_root || die "adb root failed"
+
+if [[ "$keep_awake" == 1 ]]; then
+  adb shell '
+    # VrPowerManager automation hook: virtual proximity sensor "on face".
+    am broadcast -a com.oculus.vrpowermanager.prox_close >/dev/null
+    # Oculus autosleep_time=-1 disables "motionless -> dim -> sleep" (SettingsService txn 5).
+    service call SettingsService 5 s16 autosleep_time s16 -1 i32 0 >/dev/null
+    svc power stayon usb
+    settings put global stay_on_while_plugged_in 7
+    settings put system screen_off_timeout 2147483647
+    dumpsys power | grep -q "mWakefulness=Awake" || input keyevent KEYCODE_WAKEUP
+  '
+else
+  adb shell '
+    # Back to stock behaviour: real proximity sensor, Oculus autosleep (15 s default).
+    am broadcast -a com.oculus.vrpowermanager.automation_disable >/dev/null
+    service call SettingsService 5 s16 autosleep_time s16 15 i32 0 >/dev/null
+    svc power stayon false
+    settings put global stay_on_while_plugged_in 0
+    settings put system screen_off_timeout 86400000
+    dumpsys power | grep -q "mWakefulness=Awake" || input keyevent KEYCODE_WAKEUP
+  '
+fi
+sleep 1
+st=$(adb shell 'echo "mounted=$(getprop sys.hmt.mounted) $(dumpsys power | grep -oE "mWakefulness=[A-Za-z]+" ) $(dumpsys display | grep -oE "mScreenState=[A-Z]+")"' | tr -d '\r')
+bat=$(adb shell dumpsys battery | tr -d '\r')
+level=$(awk '/  level:/ {print $2}' <<<"$bat")
+usb=$(awk '/USB powered:/ {print $3}' <<<"$bat")
+ac=$(awk '/AC powered:/ {print $3}' <<<"$bat")
+echo "$st battery=${level}% usb=${usb} ac=${ac} keep_awake=${keep_awake}"
+if (( ${level:-100} < 25 )); then
+  echo "WARNING: headset battery at ${level}% — a USB 2.0 port cannot keep up while streaming;" \
+       "charge it from a wall charger before a long session." >&2
+fi
+if [[ "$keep_awake" == 1 ]]; then
+  [[ "$st" == *mounted=1* && "$st" == *mWakefulness=Awake* && "$st" == *mScreenState=ON* ]] \
+    || die "headset not fully awake"
+fi
+echo "go-up: OK"

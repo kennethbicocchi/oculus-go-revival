@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# go-shot [name]: screenshot of what the headset displays -> shots/<ts>[-name].png
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+f="$SHOTS/$(ts)${1:+-$1}.png"
+adb exec-out screencap -p > "$f"
+[[ -s "$f" ]] || die "empty screenshot"
+echo "$f"

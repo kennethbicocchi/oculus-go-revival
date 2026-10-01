@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# pc-shot [OUTPUT] [name]: screenshot of a PC monitor via the KWin capture helper -> scratch/
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"; out="${1:-DP-3}"; f="$ROOT/scratch/pc-$(date +%H%M%S)-${2:-$out}.png"
+mkdir -p "$ROOT/scratch"
+coproc CAP { "$ROOT/build/kwin-capture/govr-kwin-capture" --output "$out" 2>/dev/null; }
+node=""; while read -t 5 -u "${CAP[0]}" l; do [[ "$l" == NODE* ]] && { node=${l#NODE }; break; }; done
+[[ -n "$node" ]] || { echo "no stream"; exit 1; }
+timeout 10 gst-launch-1.0 -q pipewiresrc path="$node" num-buffers=3 ! videoconvert ! video/x-raw,format=RGB ! pngenc snapshot=true ! filesink location="$f" >/dev/null 2>&1 || true
+kill "$CAP_PID" 2>/dev/null || true
+echo "$f"

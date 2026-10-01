@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# govr-ctl <command>: control the running GoVR server (bind these to KDE global shortcuts).
+# Commands: recenter bigger smaller closer farther up down env overlay reset idr
+set -euo pipefail
+sock="${XDG_RUNTIME_DIR:-/tmp}/govr.sock"
+[[ $# -eq 1 ]] || { sed -n '2,3p' "$0"; exit 2; }
+[[ -S "$sock" ]] || { echo "GoVR server not running ($sock missing)" >&2; exit 1; }
+python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX,socket.SOCK_DGRAM); s.sendto(sys.argv[2].encode(), sys.argv[1])' "$sock" "$1"

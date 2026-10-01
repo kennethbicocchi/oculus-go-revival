@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# go-play <game> : start a Steam game in VR mode (needs a running `go-start vr` session).
+#   go-play nms              No Man's Sky with its VR launch option (-HmdEnable 1)
+#   go-play <appid> [args]   any Steam app id, with optional VR arguments
+# Why: starting from the Steam library or a steam:// link uses the game's *default* launch
+# option, which for No Man's Sky is the flat one — SteamVR then shows it on a flat screen.
+set -euo pipefail
+case "${1:-}" in
+  nms|nomanssky) set -- 275850 -HmdEnable 1 ;;
+  "") sed -n '2,6p' "$0"; exit 2 ;;
+esac
+pgrep -x vrserver >/dev/null || echo "note: SteamVR is not running — start it first with: go-start vr" >&2
+app="$1"; shift
+exec steam -applaunch "$app" "$@"

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# go-log [-f] [extra-regex]: filtered logcat. Without -f dumps and saves to logs/.
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+follow=0; [[ "${1:-}" == -f ]] && { follow=1; shift; }
+re="GoVR|VrApi|vrapi|AndroidRuntime|FATAL|DEBUG  |avc: denied|VrPowerManager|MediaCodec|ActivityManager${1:+|$1}"
+if (( follow )); then adb logcat -v time | grep --line-buffered -E "$re"
+else f="$LOGS/$(ts)-logcat.txt"; adb logcat -d -v time > "$f"; grep -E "$re" "$f" | tail -n "${LINES_N:-80}"; echo "full log: $f"; fi

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# go-stop: stop the PC side of a GoVR session (server, ALVR dashboard, SteamVR if started by us).
+# Patterns are anchored on the executable so they never match unrelated command lines.
+pkill -x alvr_dashboard 2>/dev/null
+pkill -f '^[^ ]*python3? [^ ]*pc/govr_server\.py' 2>/dev/null
+pkill -f '^/usr/bin/env bash [^ ]*scripts/go-(steamvr|stream|desktop)' 2>/dev/null
+pkill -f '^bash [^ ]*scripts/go-(steamvr|stream|desktop)' 2>/dev/null
+[[ "${1:-}" == --steamvr ]] && pkill -x vrmonitor 2>/dev/null
+# the server restores the PC audio on SIGTERM; repair anyway if it could not
+sleep 2
+python3 "$(dirname "$0")/../pc/govr_server.py" --repair-audio
+# headset back to stock power behaviour (sleeps when taken off) if it is connected
+adb get-state >/dev/null 2>&1 && GOVR_KEEP_AWAKE=0 "$(dirname "$0")/go-up" >/dev/null 2>&1
+exit 0

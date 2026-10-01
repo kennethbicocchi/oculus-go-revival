@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# go-soak [hours]: log headset wake state every 60 s to logs/soak-<ts>.tsv.
+# Does NOT re-wake the headset: it measures whether go-up's settings hold.
+set -uo pipefail
+source "$(dirname "$0")/common.sh"
+hours="${1:-4}"; f="$LOGS/soak-$(ts).tsv"; end=$(( $(date +%s) + hours*3600 ))
+echo -e "time\tmounted\twakefulness\tscreen\tvrapi_fps\tbattery\tcurrent_mA" > "$f"; echo "$f"
+while (( $(date +%s) < end )); do
+  line=$(adb shell 'echo "$(getprop sys.hmt.mounted)	$(dumpsys power | grep -oE "mWakefulness=[A-Za-z]+" | cut -d= -f2)	$(dumpsys display | grep -oE "mScreenState=[A-Z]+" | cut -d= -f2)	$(logcat -d -t 400 -s VrApi 2>/dev/null | grep -oE "FPS=[0-9]+" | tail -1)	$(dumpsys battery | grep "  level:" | grep -oE "[0-9]+")%	$(cat /sys/class/power_supply/battery/current_now 2>/dev/null)"' 2>/dev/null | tr -d '\r')
+  echo -e "$(date +%H:%M:%S)\t${line:-ADB_ERROR}" >> "$f"
+  sleep 60
+done

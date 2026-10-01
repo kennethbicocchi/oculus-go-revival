@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# go-start [desktop|vr]: one command for a GoVR session.
+#   desktop (default)  PC monitor on a curved screen in the headset + PC audio
+#   vr                 SteamVR through ALVR (games, SteamVR Home, WebXR in the desktop browser)
+# Settings: ~/go-vr/govr.conf. Stop with Ctrl+C or scripts/go-stop [--steamvr].
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+source "$GO_ROOT/govr.conf"
+mode="${1:-desktop}"
+
+adb get-state >/dev/null 2>&1 || die "headset not connected (USB cable, adb devices)"
+if ! adb shell pm list packages com.govr.client | grep -q govr; then
+  echo "installing the GoVR client..."; "$GO_ROOT/scripts/build-client.sh" --install >/dev/null
+fi
+[[ "${KEEP_AWAKE:-no}" == yes ]] && export GOVR_KEEP_AWAKE=1
+"$GO_ROOT/scripts/go-up"
+[[ -x "$GO_ROOT/build/kwin-capture/govr-kwin-capture" ]] || "$GO_ROOT/scripts/install-kwin-capture.sh" >/dev/null
+
+audio=()
+[[ "$AUDIO" == all ]] && audio+=(--audio-default)
+[[ "$MUTE_PC" == yes ]] && audio+=(--mute-pc)
+
+case "$mode" in
+  desktop)
+    src=(--output "$OUTPUT"); [[ -n "${VIRTUAL:-}" ]] && src=(--virtual "$VIRTUAL")
+    exec "$GO_ROOT/scripts/go-desktop" "${src[@]}" --bitrate "$BITRATE" "${audio[@]}" ;;
+  vr|steamvr)
+    GOVR_OUTPUT="$OUTPUT" exec "$GO_ROOT/scripts/go-steamvr" "${audio[@]}" ;;
+  *) die "usage: go-start [desktop|vr]" ;;
+esac

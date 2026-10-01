@@ -17,6 +17,12 @@ build. Host machine: Arch Linux (CachyOS), fish shell.
 > unlocked headset. Those facts cost several nights to discover. They are
 > written down here so nobody has to rediscover them.
 
+> **New: [GoVR](govr/README.md) — the Go as a wired PC-VR headset on Linux.** PC desktop on a
+> curved screen, SteamVR games over USB (No Man's Sky tested), 360/180/3D video player, PC audio
+> in the headset, one-click control panel — keeping the Go's own VR compositor. Nothing flashed.
+>
+> ![No Man's Sky on the Oculus Go via GoVR](govr/screenshots/04-no-mans-sky-vr-cockpit.jpg)
+
 ---
 
 ## What actually works after following this
@@ -34,6 +40,8 @@ build. Host machine: Arch Linux (CachyOS), fish shell.
 | **App launcher + gamepad button to return to it** | ✅ |
 | **Real Android settings panel** | ✅ |
 | **Taps via `adb shell input tap`** (fullscreen apps only) | ✅ |
+| **PC desktop, SteamVR games and VR video over USB** ([GoVR](govr/README.md)) | ✅ |
+| **Headset kept awake without wearing it** (VrPowerManager automation intents, see GoVR) | ✅ |
 | VR pointer / cursor | ❌ unsolved |
 | Alternative browsers | ❌ all fail, see below |
 | Library / Store / Search tabs | ❌ dead (server-side, unfixable) |
@@ -443,6 +451,7 @@ and has never been explored.
 ## Repository layout
 
 ```
+govr/       GoVR: wired PC-VR for Linux (headset app, PC server, panel, ALVR patch)
 scripts/    fish functions, the system-image modification helper,
             btmouse.py (unfinished Bluetooth HID mouse)
 patches/    the init service and the autostart payload

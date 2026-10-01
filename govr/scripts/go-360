@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# go-360 <youtube-url | file | media-url> [--3d | --layout 360|360tb|180|180sbs|flat]:
+# play a VR video in the headset. --3d = 360 top/bottom stereo. Any site yt-dlp supports.
+# Controls while playing: gamepad on the PC (A pause, LB/RB -/+5 s, D-pad -/+30 s, X format,
+# Y recenter), govr-ctl pause|fwd|back|fwd30|back30|layout, or Meta+Alt+Space/,/./F.
+# Looking around is handled by the headset itself (no streaming latency). A recenters (gamepad).
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+[[ $# -ge 1 ]] || { sed -n '2,4p' "$0"; exit 2; }
+url="$1"; shift; layout=360
+[[ "${1:-}" == --3d ]] && { layout=360tb; shift; }
+source "$ROOT/govr.conf"
+audio=(); [[ "$MUTE_PC" == yes ]] && audio+=(--mute-pc)
+exec "$ROOT/scripts/go-stream" --source url --url "$url" --layout "$layout" "${audio[@]}" "$@"

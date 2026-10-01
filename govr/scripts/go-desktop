@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# go-desktop [OUTPUT | --virtual WxH] [server args...]: show a PC monitor in the headset.
+#   go-desktop                 mirror $GOVR_OUTPUT (default DP-3)
+#   go-desktop HDMI-A-1        mirror another monitor (see: build/kwin-capture/govr-kwin-capture --list)
+#   go-desktop --virtual 1920x1080   extra virtual monitor just for the headset
+# Keys in this terminal: r recenter, +/- size, [ ] distance, w/s up/down, e environment, q quit.
+# From anywhere: pc/govr-ctl recenter|bigger|smaller|closer|farther|up|down|env|reset
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+[[ -x "$ROOT/build/kwin-capture/govr-kwin-capture" ]] || "$ROOT/scripts/install-kwin-capture.sh"
+src=(--source kwin)
+if [[ "${1:-}" == --virtual ]]; then src+=(--virtual "$2"); shift 2
+elif [[ -n "${1:-}" && "${1:-}" != -* ]]; then src+=(--output "$1"); shift
+else src+=(--output "${GOVR_OUTPUT:-DP-3}"); fi
+exec "$ROOT/scripts/go-stream" "${src[@]}" "$@"
