@@ -10,9 +10,11 @@
 #include <android/native_window_jni.h>
 #include <android_native_app_glue.h>
 #include <sys/prctl.h>
+#include <sys/system_properties.h>
 #include <unistd.h>
 
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -22,6 +24,7 @@
 #include "VrApi.h"
 #include "VrApi_Helpers.h"
 #include "VrApi_SystemUtils.h"
+
 #include "alvr_session.h"
 #include "audio.h"
 #include "common.h"
@@ -348,6 +351,27 @@ ovrLayerEquirect2 BuildEquirectLayer(ovrTextureSwapChain* chain, float yawRad, i
 // Full-view projection layer from a side-by-side video surface (SteamVR mode).
 // fov: per eye left, right, up, down in radians (left/down negative). The layer's head pose
 // is the pose the frame was rendered with, so the compositor's timewarp corrects the rest.
+// Test aid: debug.govr.levelhead = "1" (level, forward) or "<yaw>,<pitch>" in degrees (+ left /
+// + up). Re-read every ~2 s. Returns false when unset.
+bool LevelHeadDebug(ovrQuatf* q) {
+    static int64_t lastNs = 0;
+    static bool value = false;
+    static ovrQuatf orientation = {0, 0, 0, 1};
+    const int64_t now = NowNanos();
+    if (now - lastNs > 2000000000LL) {
+        lastNs = now;
+        char buf[PROP_VALUE_MAX] = {};
+        __system_property_get("debug.govr.levelhead", buf);
+        float yaw = 0, pitch = 0;
+        value = buf[0] == '1' || sscanf(buf, "%f,%f", &yaw, &pitch) == 2;
+        const float y = yaw * 0.0174533f / 2, p = pitch * 0.0174533f / 2;
+        // yaw about +Y, then pitch about +X
+        orientation = {cosf(y) * sinf(p), sinf(y) * cosf(p), -sinf(y) * sinf(p), cosf(y) * cosf(p)};
+    }
+    *q = orientation;
+    return value;
+}
+
 ovrLayerProjection2 BuildVideoProjectionLayer(ovrTextureSwapChain* chain, const float fov[2][4],
                                               const ovrQuatf& renderOrientation,
                                               const ovrTracking2& tracking) {
@@ -605,6 +629,13 @@ struct App {
             case proto::OSD:
                 osd.SetText(std::string((const char*)d, n));
                 break;
+            case proto::VR_POINTER: {
+                if (n < sizeof(proto::VrControllers)) break;
+                proto::VrControllers c;
+                memcpy(&c, d, sizeof(c));
+                alvr.SetControllers(c);
+                break;
+            }
             case proto::PING:
                 net.Send(proto::PONG, d, n);
                 break;
@@ -764,7 +795,17 @@ struct App {
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 
         ovrMatrix4f projs[2] = {tracking.Eye[0].ProjectionMatrix, tracking.Eye[1].ProjectionMatrix};
-        alvr.SendTracking(tracking, projs);
+        // Test aid (setprop debug.govr.levelhead 1): SteamVR gets a level, forward-looking head and
+        // its frames are shown fixed to the view, so a headset lying on the desk can be tested.
+        ovrQuatf fakeHead;
+        const bool levelHead = LevelHeadDebug(&fakeHead);
+        if (levelHead) {
+            ovrTracking2 level = tracking;
+            level.HeadPose.Pose.Orientation = fakeHead;
+            alvr.SendTracking(level, projs);
+        } else {
+            alvr.SendTracking(tracking, projs);
+        }
 
         // Layer stack: SteamVR stream (if any) replaces the environment; the desktop screen
         // is drawn on top unless SteamVR is streaming and the overlay is off.
@@ -777,7 +818,9 @@ struct App {
         AlvrSession::FrameToShow vrFrame;
         const bool vrStreaming = alvr.BeginFrame(&vrFrame);
         if (vrStreaming) {
-            vrLayer = BuildVideoProjectionLayer(alvr.Swapchain(), vrFrame.fov, vrFrame.orientation, tracking);
+            vrLayer = BuildVideoProjectionLayer(alvr.Swapchain(), vrFrame.fov,
+                                                levelHead ? tracking.HeadPose.Pose.Orientation : vrFrame.orientation,
+                                                tracking);
             layers[layerCount++] = &vrLayer.Header;
         } else if (streaming && sp.equirect) {
             sphereLayer = BuildEquirectLayer(videoChain, screenYaw, sp.equirect);

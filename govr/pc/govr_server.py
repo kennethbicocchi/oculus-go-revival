@@ -26,8 +26,8 @@ from gi.repository import Gst, GstVideo  # noqa: E402
 
 PORT = 9950  # ALVR uses 9943/9944
 VERSION = 1
-HELLO_SERVER, VIDEO_CONFIG, VIDEO_FRAME, SCREEN, PING, AUDIO_CONFIG, AUDIO_FRAME, OSD = (
-    1, 2, 3, 4, 5, 6, 7, 8)
+HELLO_SERVER, VIDEO_CONFIG, VIDEO_FRAME, SCREEN, PING, AUDIO_CONFIG, AUDIO_FRAME, OSD, VR_POINTER = (
+    1, 2, 3, 4, 5, 6, 7, 8, 9)
 HELLO_CLIENT, FRAME_ACK, HEAD_POSE, PONG, REQUEST_IDR, CONTROL, AUDIO_ACK, GAMEPAD = (
     64, 65, 66, 67, 68, 69, 70, 71)
 CODECS = {"h264": 0, "hevc": 1}
@@ -387,6 +387,7 @@ class Server:
         self.audio_pipeline = None
         self.audio_sink = None
         self.pad = None
+        self.vr_pointer = None
         self.player_paused = False
         self.osd_until = 0.0
         self.menu_open = False
@@ -623,6 +624,8 @@ class Server:
                     self.args.no_gamepad = True
             if self.pad:
                 self.pad.update(data)
+            if self.vr_pointer:
+                self.vr_pointer.feed_headset_pad(data)
         elif mtype == CONTROL:
             cmd = struct.unpack("<I", data[:4])[0]
             self.control(CTL_NAMES.get(cmd, ""), source="gamepad")
@@ -877,6 +880,11 @@ class Server:
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
+    def _send_pointer(self, payload):
+        c = self.client
+        if c and c.alive:
+            c.send(VR_POINTER, payload)
+
     def push_screen(self):
         if self.client and self.client.alive:
             self.client.send(SCREEN, self.screen.pack())
@@ -894,6 +902,10 @@ class Server:
         ls.listen(1)
         ls.settimeout(0.5)
         threading.Thread(target=self._control_socket_loop, daemon=True).start()
+        if self.args.vr_pointer:
+            from vr_pointer import VrPointer
+            self.vr_pointer = VrPointer(self._send_pointer, log, self._osd_set)
+            self.vr_pointer.start()
         if self.args.source == "url":
             threading.Thread(target=self._osd_loop, daemon=True).start()
             threading.Thread(target=self._gamepad_player_loop, daemon=True).start()
@@ -995,6 +1007,8 @@ def parse_args(argv=None):
     p.add_argument("--audio-default", action="store_true",
                    help="make GoVR the default output while running (restored on exit)")
     p.add_argument("--mute-pc", action="store_true", help="mute the PC speakers while running")
+    p.add_argument("--vr-pointer", action="store_true",
+                   help="SteamVR session: the Xbox pad drives a laser pointer in the dashboard")
     p.add_argument("--no-gamepad", action="store_true",
                    help="ignore the headset gamepad (no virtual pad on the PC)")
     p.add_argument("--duration", type=float, default=0, help="exit after N seconds")

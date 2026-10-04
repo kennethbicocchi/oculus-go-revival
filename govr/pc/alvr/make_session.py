@@ -20,7 +20,10 @@ for key in ("transcoding_view_resolution", "emulated_headset_view_resolution"):
 st["audio"]["game_audio"]["enabled"] = False                 # audio goes through the govr sink (D-012)
 st["audio"]["microphone"]["enabled"] = False
 h = st["headset"]
-h["controllers"]["enabled"] = False                          # the Go is a head only (ADDENDUM)
+# The Go has no controller in SteamVR mode, but a virtual right controller is sent while the
+# SteamVR dashboard is open, driven by the Xbox pad (pc/vr_pointer.py). It is disconnected the
+# rest of the time, so games only see the gamepad.
+h["controllers"]["enabled"] = True
 h["position_recentering_mode"]["variant"] = "Local"          # 3DoF, seated eye height
 h["position_recentering_mode"]["Local"] = {"view_height": 1.2}
 c = st["connection"]

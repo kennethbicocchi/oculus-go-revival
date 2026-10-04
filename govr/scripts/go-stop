@@ -6,6 +6,7 @@ pkill -f '^[^ ]*python3? [^ ]*pc/govr_server\.py' 2>/dev/null
 pkill -f '^/usr/bin/env bash [^ ]*scripts/go-(steamvr|stream|desktop)' 2>/dev/null
 pkill -f '^bash [^ ]*scripts/go-(steamvr|stream|desktop)' 2>/dev/null
 [[ "${1:-}" == --steamvr ]] && pkill -x vrmonitor 2>/dev/null
+rm -f "$(dirname "$0")/../state/steamvr-ready"
 # the server restores the PC audio on SIGTERM; repair anyway if it could not
 sleep 2
 python3 "$(dirname "$0")/../pc/govr_server.py" --repair-audio

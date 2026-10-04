@@ -18,6 +18,7 @@ floats little-endian.
 | 6 | AUDIO_CONFIG | `u32 codec (0=Opus)`, `u32 sample_rate`, `u32 channels`, `u32 frame_ms` |
 | 8 | OSD | UTF-8 text for the head-locked 2D panel (menu, player status); empty = hide. Lines separated by `\n`, a line starting with `▸` is highlighted |
 | 7 | AUDIO_FRAME | `u64 pc_time_ns` (capture), one Opus packet |
+| 9 | VR_POINTER | `u32 flags` (1 right controller, 2 left controller too), `f32 yaw, pitch` (right controller aim offset from the gaze, radians, + right / + up), `u32 buttons` (1 A, 2 B, 4 X, 8 Y, 16 left menu, 32 right system, 64 left stick click, 128 right stick click), `f32 rx, ry, lx, ly` (thumbsticks -1..1, + up), `f32 rtrigger, ltrigger, rgrip, lgrip` (0..1) — ~60 Hz while virtual controllers are active (pc/vr_pointer.py: SteamVR dashboard pointer, game menu pointer, gamepad as VR controllers); the Go sends them to ALVR as Touch controllers, which disconnect 0.5 s after the last active message |
 
 ## Go -> PC
 | type | name | payload |

@@ -19,7 +19,9 @@ build. Host machine: Arch Linux (CachyOS), fish shell.
 
 > **New: [GoVR](govr/README.md) — the Go as a wired PC-VR headset on Linux.** PC desktop on a
 > curved screen, SteamVR games over USB (No Man's Sky tested), 360/180/3D video player, PC audio
-> in the headset, one-click control panel — keeping the Go's own VR compositor. Nothing flashed.
+> in the headset, one-click control panel with a list of your VR games, SteamVR menu driven by the
+> Xbox pad — keeping the Go's own VR compositor. Nothing flashed.
+> Step-by-step setup: [How to install](govr/README.md#how-to-install).
 >
 > ![No Man's Sky on the Oculus Go via GoVR](govr/screenshots/04-no-mans-sky-vr-cockpit.jpg)
 

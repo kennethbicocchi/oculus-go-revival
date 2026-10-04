@@ -4,9 +4,11 @@
 #  2. writes ~/.config/alvr/session.json for the Go (first run, or with GOVR_ALVR_RESET=1)
 #  3. registers the ALVR driver with SteamVR
 #  4. runs the GoVR desktop/audio server: ALL PC audio goes to the headset during the session
-#     (desktop screen available on top of SteamVR with govr-ctl overlay / gamepad Back)
-#  5. starts the ALVR dashboard (server UI, compositor wrapper, driver unblock) and SteamVR
-#     through vrmonitor.sh (outside the Steam Runtime container, see make_session.py)
+#     (desktop screen available on top of SteamVR with govr-ctl overlay / gamepad Back) and
+#     the gamepad laser pointer for the SteamVR dashboard (pc/vr_pointer.py)
+#  5. checks ALVR's vrcompositor wrapper and driver unblock (what the ALVR dashboard would do;
+#     the dashboard itself is not started, see below) and starts SteamVR through vrmonitor.sh
+#     (outside the Steam Runtime container, see make_session.py)
 set -euo pipefail
 source "$(dirname "$0")/common.sh"
 ALVR="$GO_ROOT/toolchain/alvr_streamer_linux"
@@ -30,19 +32,96 @@ if [[ ! -f "$SESSION" || "${GOVR_ALVR_RESET:-0}" == 1 ]]; then
   [[ -f "$SESSION" ]] && cp "$SESSION" "$SESSION.bak-$(ts)"
   python3 "$GO_ROOT/pc/alvr/make_session.py" "$SESSION"
 fi
+# - Sessions written before the dashboard pointer had controllers disabled: enable them.
+# - Remove the wired client entry: ALVR only dials the headset over USB while that entry
+#   exists, and it registers the controllers with SteamVR on the first connection. During
+#   SteamVR's own startup vrserver is busy and each device activation takes over a second,
+#   past the driver's 1 s wait: the controllers then stay registered but never receive a pose
+#   (no dashboard pointer). connect_when_ready below adds the entry back once SteamVR is idle.
+python3 - "$SESSION" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+c = s["session_settings"]["headset"]["controllers"]
+if not c["enabled"]:
+    c["enabled"] = True
+    print("ALVR session: controllers enabled (virtual dashboard pointer)")
+s.get("client_connections", {}).pop("client.wired", None)
+json.dump(s, open(sys.argv[1], "w"), indent=2)
+PY
+# Games are started only after $READY exists (govr-launch game): a game loading while the
+# controllers register would make their activation slow again.
+READY="$GO_ROOT/state/steamvr-ready"
+mkdir -p "$GO_ROOT/state"; rm -f "$READY"
+alvr_request() {   # ALVR server web API (the dashboard's own channel)
+  curl -s -o /dev/null -w '%{http_code}' -X POST -H 'X-ALVR: true' -H 'Content-Type: application/json' \
+    localhost:8082/api/dashboard-request -d "$1"
+}
+connect_when_ready() {
+  for _ in $(seq 120); do pgrep -f 'SteamVR/bin/linux64/vrcompositor' >/dev/null && break; sleep 1; done
+  sleep 12   # vrserver finishes starting the compositor and the web helpers
+  for _ in $(seq 30); do
+    [[ $(alvr_request '{"UpdateClientList":{"hostname":"client.wired","action":{"AddIfMissing":{"trusted":true,"manual_ips":[]}}}}') == 200 ]] && break
+    sleep 2
+  done
+  alvr_request '{"UpdateClientList":{"hostname":"client.wired","action":{"SetDisplayName":"Oculus Go (USB)"}}}' >/dev/null
+  echo "ALVR: headset connection enabled (SteamVR ready)"
+  sleep 5    # the headset connects and the controllers get registered
+  touch "$READY"
+}
 "$STEAMVR/bin/vrpathreg.sh" adddriver "$ALVR/lib64/alvr" >/dev/null 2>&1 || true
 
 # audio options from go-start (default: everything to the headset)
 audio_args=("$@"); [[ $# -eq 0 ]] && audio_args=(--audio-default)
-"$GO_ROOT/.venv-srv/bin/python" "$GO_ROOT/pc/govr_server.py" --source kwin --output "${GOVR_OUTPUT:-DP-3}" \
-  "${audio_args[@]}" --no-adb --log "$LOGS/steamvr-govr-$(ts).txt" &
+GOVR_STEAMVR="$STEAMVR" "$GO_ROOT/.venv-srv/bin/python" "$GO_ROOT/pc/govr_server.py" --source kwin --output "${GOVR_OUTPUT:-DP-3}" \
+  "${audio_args[@]}" --vr-pointer --no-adb --log "$LOGS/steamvr-govr-$(ts).txt" &
 srv=$!
 trap 'kill $srv 2>/dev/null' EXIT
 pgrep -x steam >/dev/null || pgrep -f 'ubuntu12_32/steam' >/dev/null || { steam -silent >/dev/null 2>&1 & sleep 15; }
+# Setup steps the ALVR dashboard's launcher does before starting SteamVR (it is not used to
+# launch SteamVR here):
+#  - vrcompositor -> ALVR's wrapper (undone by SteamVR updates)
+#  - un-block the ALVR driver if SteamVR put it in safe mode
+wrapper="$ALVR/libexec/alvr/vrcompositor-wrapper"
+comp="$STEAMVR/bin/linux64/vrcompositor"
+if [[ "$(readlink "$comp")" != "$wrapper" ]]; then
+  [[ -L "$comp" ]] && rm -f "$comp" || mv -f "$comp" "$comp.real"
+  ln -s "$wrapper" "$comp" && echo "vrcompositor wrapped for ALVR"
+fi
+python3 - "$HOME/.local/share/Steam/config/steamvr.vrsettings" <<'PY'
+import json, sys
+try:
+    s = json.load(open(sys.argv[1]))
+except (OSError, ValueError):
+    sys.exit(0)
+d = s.get("driver_alvr_server", {})
+if d.get("blocked_by_safe_mode"):
+    d["blocked_by_safe_mode"] = False
+    json.dump(s, open(sys.argv[1], "w"), indent=3)
+    print("ALVR driver un-blocked in SteamVR")
+PY
+# The ALVR dashboard runs only while SteamVR loads the driver:
+#  - if a dashboard is running at that moment, ALVR registers the HMD right away (without it the
+#    HMD appears only when the headset connects, and the compositor cannot start before that);
+#  - but when the session settings differ from the ones SteamVR was started with (e.g. after
+#    enabling controllers), ALVR asks the dashboard to restart SteamVR on connection: it kills
+#    vrmonitor and relaunches SteamVR through Steam, which fails here (Steam Runtime container,
+#    see make_session.py) and SteamVR just dies. With no dashboard by then, ALVR only logs
+#    "Cannot restart SteamVR" and the new settings apply from the next start.
+pkill -x alvr_dashboard 2>/dev/null || true
 "$ALVR/bin/alvr_dashboard" > "$LOGS/alvr-dashboard-$(ts).txt" 2>&1 &
 dash=$!
-trap 'kill $srv $dash 2>/dev/null' EXIT
-sleep 5   # let the dashboard install its compositor wrapper / unblock the driver
+trap 'kill $srv $dash 2>/dev/null; rm -f "$READY"' EXIT
+sleep 3
+connect_when_ready &
 echo "starting SteamVR; close SteamVR (or Ctrl+C) to end the session"
 # QT_QPA_PLATFORM=xcb: vrmonitor's Qt UI must use XWayland on KDE Wayland (ALVR wiki)
-QT_QPA_PLATFORM=xcb "$STEAMVR/bin/vrmonitor.sh" > "$LOGS/steamvr-$(ts).txt" 2>&1 || true
+QT_QPA_PLATFORM=xcb "$STEAMVR/bin/vrmonitor.sh" > "$LOGS/steamvr-$(ts).txt" 2>&1 &
+vmon=$!
+for _ in $(seq 60); do   # HMD registered -> compositor started
+  pgrep -f 'SteamVR/bin/linux64/vrcompositor' >/dev/null && break
+  kill -0 $vmon 2>/dev/null || break
+  sleep 1
+done
+sleep 2
+kill $dash 2>/dev/null || true
+wait $vmon || true

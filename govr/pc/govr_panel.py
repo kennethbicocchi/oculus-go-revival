@@ -2,6 +2,8 @@
 """GoVR control panel: one window with every GoVR action (modes, video player, screen
 placement, settings) and the headset status. Italian UI; everything it does goes through the
 same scripts as the menu entries and shortcuts (scripts/govr-launch, pc/govr-ctl)."""
+import glob
+import json
 import os
 import re
 import subprocess
@@ -9,17 +11,19 @@ import sys
 import threading
 import time
 
-from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtGui import QFont, QIcon
+from PyQt6.QtCore import QSize, QTimer, Qt
+from PyQt6.QtGui import QFont, QIcon, QPixmap
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QGridLayout,
-                             QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-                             QPushButton, QRadioButton, QVBoxLayout, QWidget)
+                             QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+                             QListWidgetItem, QMessageBox, QPushButton, QRadioButton,
+                             QVBoxLayout, QWidget)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LAUNCH = os.path.join(ROOT, "scripts", "govr-launch")
 CTL = os.path.join(ROOT, "pc", "govr-ctl")
 CONF = os.path.join(ROOT, "govr.conf")
 CAPTURE = os.path.join(ROOT, "build", "kwin-capture", "govr-kwin-capture")
+STEAM = os.path.expanduser("~/.local/share/Steam")
 LAYOUTS = [("360", "360°"), ("360tb", "360° 3D (sopra/sotto)"), ("180", "180°"),
            ("180sbs", "180° 3D / VR180 (affiancato)"), ("flat", "Video normale (schermo cinema)")]
 
@@ -57,6 +61,33 @@ def write_conf(updates):
     open(CONF, "w").write("\n".join(lines) + "\n")
 
 
+def vr_games():
+    """Installed Steam games with a VR mode: Steam lists them in steamapps.vrmanifest (the same
+    list SteamVR's library shows). -> [(name, appid, image path or None)], last played first."""
+    try:
+        apps = json.load(open(os.path.join(STEAM, "config", "steamapps.vrmanifest")))["applications"]
+    except (OSError, ValueError, KeyError):
+        return []
+    games = []
+    for a in apps:
+        m = re.fullmatch(r"steam\.app\.(\d+)", a.get("app_key", ""))
+        if not m:
+            continue
+        appid = m.group(1)
+        name = a.get("strings", {}).get("en_us", {}).get("name") or appid
+        # image_path is a CDN URL whose tail (".../apps/<id>/<hash>/library_header.jpg") mirrors
+        # Steam's local cache; fall back to any cached header of the app.
+        cache = os.path.join(STEAM, "appcache", "librarycache", appid)
+        tail = a.get("image_path", "").split("?")[0].split(f"/apps/{appid}/")[-1]
+        image = os.path.join(cache, tail) if tail else ""
+        if not os.path.isfile(image):
+            found = sorted(glob.glob(os.path.join(cache, "**", "*header*.jpg"), recursive=True))
+            image = found[0] if found else None
+        games.append((name, appid, image, int(a.get("last_played_time") or 0)))
+    games.sort(key=lambda g: -g[3])
+    return [g[:3] for g in games]
+
+
 class Status:
     """Polled in a background thread so the window never freezes on adb."""
 
@@ -82,9 +113,10 @@ class Status:
                 ps = subprocess.run(["ps", "-eo", "comm,args"], capture_output=True, text=True).stdout
                 server = [l for l in ps.splitlines() if "govr_server.py" in l and "python" in l.split()[0]]
                 vr = any(l.split()[0] == "vrserver" for l in ps.splitlines() if l.strip())
-                nms = any(l.split()[0] == "NMS.exe" for l in ps.splitlines() if l.strip())
+                comms = {l.split()[0] for l in ps.splitlines() if l.strip()}
                 if vr:
-                    self.mode = "No Man's Sky (VR)" if nms else "SteamVR"
+                    self.mode = ("No Man's Sky (VR)" if "NMS.exe" in comms else
+                                 "The Forest (VR)" if "TheForestVR.exe" in comms else "SteamVR")
                 elif any("--source url" in l for l in server):
                     self.mode = "Video VR"
                 elif server:
@@ -116,12 +148,29 @@ class Panel(QWidget):
         g = QGridLayout(box)
         for i, (text, icon, mode) in enumerate([
                 ("Desktop nel visore", "video-display", "desktop"),
-                ("SteamVR (giochi VR)", "applications-games", "vr"),
-                ("No Man's Sky VR", "applications-games", "nms"),
+                ("SteamVR (scegli il gioco nel visore)", "applications-games", "vr"),
                 ("Stop (chiudi tutto)", "process-stop", "stop")]):
             b = self.big_button(text, icon, lambda _, m=mode: run_detached(LAUNCH, m))
             g.addWidget(b, i // 2, i % 2)
         root.addWidget(box)
+
+        # --- VR games
+        box = QGroupBox("Giochi VR (doppio clic per giocare nel visore)")
+        v = QVBoxLayout(box)
+        self.games = QListWidget()
+        self.games.setIconSize(QSize(184, 69))
+        self.games.setMinimumHeight(170)
+        self.games.itemDoubleClicked.connect(lambda _: self.play_game())
+        v.addWidget(self.games)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Avvia SteamVR se serve, poi il gioco in modalità VR."))
+        row.addStretch(1)
+        row.addWidget(self.button("Aggiorna elenco", "view-refresh", self.load_games))
+        self.btn_game = self.big_button("Gioca nel visore", "media-playback-start", self.play_game)
+        row.addWidget(self.btn_game)
+        v.addLayout(row)
+        root.addWidget(box)
+        self.load_games()
 
         # --- video
         box = QGroupBox("Video VR (YouTube, Vimeo, altri siti, file sul PC)")
@@ -240,6 +289,30 @@ class Panel(QWidget):
         self.lbl_status.setText(text)
 
     # --- actions
+    def load_games(self):
+        self.games.clear()
+        games = vr_games()
+        for name, appid, image in games:
+            item = QListWidgetItem(name)
+            if image:
+                item.setIcon(QIcon(QPixmap(image)))
+            item.setData(Qt.ItemDataRole.UserRole, (appid, name))
+            f = item.font(); f.setPointSize(f.pointSize() + 2); item.setFont(f)
+            self.games.addItem(item)
+        if self.games.count():
+            self.games.setCurrentRow(0)
+        else:
+            self.games.addItem("Nessun gioco VR installato trovato in Steam")
+        self.btn_game.setEnabled(bool(games))
+
+    def play_game(self):
+        item = self.games.currentItem()
+        data = item and item.data(Qt.ItemDataRole.UserRole)
+        if not data:
+            return
+        appid, name = data
+        run_detached(LAUNCH, "game", appid, name)
+
     def browse(self):
         f, _ = QFileDialog.getOpenFileName(self, "Scegli un video", os.path.expanduser("~"),
                                            "Video (*.mp4 *.mkv *.webm *.mov *.avi);;Tutti i file (*)")
@@ -267,6 +340,6 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setDesktopFileName("govr-panel")
     w = Panel()
-    w.resize(760, 640)
+    w.resize(780, 860)
     w.show()
     sys.exit(app.exec())

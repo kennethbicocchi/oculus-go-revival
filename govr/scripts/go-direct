@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# go-direct <appid> <exe> [args...] : run a Windows Steam game through Proton directly, bypassing
+# Steam's launch flow.
+#   go-direct 242760 TheForestVR.exe
+# Why: when SteamVR is running, Steam shows its launch dialogs ("Launchers", launch-option
+# picker, EULA...) inside the SteamVR dashboard, which ignores the gamepad, so the launch
+# hangs on an OK button nobody can press. This runs the same command Steam runs
+# (Steam Linux Runtime entry point -> proton waitforexitandrun <exe>) with the same STEAM_COMPAT_*
+# environment; Steam must be running (Steamworks login, overlay-free). The game must have been
+# started once from Steam (compatdata prefix created).
+# PROTON=<dir name under steamapps/common> overrides the Proton build (default: Proton - Experimental).
+set -euo pipefail
+[[ $# -ge 2 ]] || { sed -n '2,4p' "$0"; exit 2; }
+app="$1"; exe="$2"; shift 2
+STEAM="$HOME/.local/share/Steam"
+
+mapfile -t LIBS < <(sed -n 's/^\s*"path"\s*"\(.*\)"/\1/p' "$STEAM/steamapps/libraryfolders.vdf")
+acf_field() { sed -n "s/^\s*\"$2\"\s*\"\(.*\)\"/\1/p" "$1" | head -1; }
+find_app() {   # appid -> library path containing it
+  for l in "${LIBS[@]}"; do [[ -f "$l/steamapps/appmanifest_$1.acf" ]] && { echo "$l"; return; }; done
+  return 1
+}
+find_common() {   # dir name under steamapps/common -> full path
+  for l in "${LIBS[@]}"; do [[ -d "$l/steamapps/common/$1" ]] && { echo "$l/steamapps/common/$1"; return; }; done
+  return 1
+}
+
+lib=$(find_app "$app") || { echo "app $app is not installed" >&2; exit 1; }
+install="$lib/steamapps/common/$(acf_field "$lib/steamapps/appmanifest_$app.acf" installdir)"
+[[ -f "$install/$exe" ]] || { echo "not found: $install/$exe" >&2; exit 1; }
+compat="$lib/steamapps/compatdata/$app"
+[[ -d "$compat/pfx" ]] || { echo "no Proton prefix for $app: start the game once from Steam" >&2; exit 1; }
+proton=$(find_common "${PROTON:-Proton - Experimental}") || { echo "Proton not found" >&2; exit 1; }
+rt_id=$(acf_field "$proton/toolmanifest.vdf" require_tool_appid)
+rt_lib=$(find_app "$rt_id") || { echo "Steam Linux Runtime $rt_id not installed" >&2; exit 1; }
+runtime="$rt_lib/steamapps/common/$(acf_field "$rt_lib/steamapps/appmanifest_$rt_id.acf" installdir)"
+
+pgrep -x steam >/dev/null || echo "note: Steam is not running — the game may refuse to start" >&2
+export SteamAppId="$app" SteamGameId="$app" STEAM_COMPAT_APP_ID="$app"
+export STEAM_COMPAT_DATA_PATH="$compat" STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM"
+export STEAM_COMPAT_INSTALL_PATH="$install" STEAM_COMPAT_TOOL_PATHS="$proton:$runtime"
+export STEAM_COMPAT_LIBRARY_PATHS="$(IFS=:; echo "${LIBS[*]}")"
+cd "$install"
+exec "$runtime/_v2-entry-point" --verb=waitforexitandrun -- "$proton/proton" waitforexitandrun "$install/$exe" "$@"

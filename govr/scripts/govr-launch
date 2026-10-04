@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# govr-launch <desktop|vr|nms|youtube|stop> | video <url-or-file> <layout>: one-click entry point used by the KDE menu
+# govr-launch <desktop|vr|nms|forest|youtube|stop> | video <url-or-file> <layout> | game <appid> [name]:
+# one-click entry point used by the KDE menu
 # launchers ("GoVR ..."). Stops whatever GoVR session is running, starts the new one in the
 # background, and reports with desktop notifications (no terminal needed).
 set -uo pipefail
@@ -24,6 +25,38 @@ elif [[ "$mode" == youtube ]]; then
     180sbs "180° 3D / VR180 (immagini affiancate)" off flat "Video normale (schermo cinema)" off) || exit 0
 fi
 
+READY="$ROOT/state/steamvr-ready"   # written by go-steamvr once headset and controllers are registered
+play_when_ready() {   # <go-play args...>: wait for the SteamVR session, then start the game
+  for _ in $(seq 120); do [[ -f "$READY" ]] && break; sleep 2; done
+  [[ -f "$READY" ]] || { note "SteamVR non si è avviato: gioco non lanciato (vedi logs/launcher.log)."; return; }
+  "$ROOT/scripts/go-play" "$@" >>"$LOG" 2>&1
+}
+play_later() {   # play_when_ready in its own session, so it survives whoever started us
+  export ROOT LOG READY; export -f play_when_ready note
+  setsid -f bash -c 'play_when_ready "$@"' play_later "$@" </dev/null >/dev/null 2>&1
+}
+case "$mode" in nms) set -- game 275850 "No Man's Sky"; mode=game ;;
+                forest) set -- game 242760 "The Forest"; mode=game ;; esac
+if [[ "$mode" == game ]]; then
+  app="${2:-}"; name="${3:-$app}"
+  [[ "$app" =~ ^[0-9]+$ ]] || fail "Gioco non valido: $app"
+  # A SteamVR session already running or starting is reused: restarting it here would kill the
+  # one that is still coming up (and each extra click would start over again).
+  if pgrep -f 'scripts/go-steamv[r]' >/dev/null; then
+    echo "=== $(date) game $app $name (session reused)" >>"$LOG"
+    if pgrep -f 'play_when_read[y]' >/dev/null; then
+      note "Sto già avviando un gioco: attendi, SteamVR si sta preparando."
+    elif [[ -f "$READY" ]]; then
+      note "Avvio $name nel visore…"
+      play_later "$app"
+    else
+      note "SteamVR si sta avviando: $name partirà appena è pronto."
+      play_later "$app"
+    fi
+    exit 0
+  fi
+fi
+
 note "Chiudo la sessione precedente…"
 "$ROOT/scripts/go-stop" --steamvr >>"$LOG" 2>&1
 sleep 2
@@ -32,11 +65,10 @@ case "$mode" in
   desktop) nohup setsid "$ROOT/scripts/go-start" desktop >>"$LOG" 2>&1 < /dev/null &
            note "Desktop nel visore: avvio in corso (circa 10 secondi)." ;;
   vr)      nohup setsid "$ROOT/scripts/go-start" vr >>"$LOG" 2>&1 < /dev/null &
-           note "SteamVR: avvio in corso (circa 30 secondi). Poi avvia il gioco." ;;
-  nms)     nohup setsid "$ROOT/scripts/go-start" vr >>"$LOG" 2>&1 < /dev/null &
-           note "SteamVR in avvio, poi No Man's Sky in modalità VR (circa 1-2 minuti)."
-           ( for i in $(seq 60); do pgrep -x vrserver >/dev/null && break; sleep 2; done; sleep 15
-             "$ROOT/scripts/go-play" nms >>"$LOG" 2>&1 ) & ;;
+           note "SteamVR: avvio in corso (circa 40 secondi). Poi scegli il gioco dal menu di SteamVR: punta con lo sguardo (o stick sinistro), A per cliccare, View+Menu apre/chiude il menu." ;;
+  game)    nohup setsid "$ROOT/scripts/go-start" vr >>"$LOG" 2>&1 < /dev/null &
+           note "SteamVR in avvio, poi $name in modalità VR (circa 1-2 minuti)."
+           play_later "$app" ;;
   youtube) nohup setsid "$ROOT/scripts/go-360" "$url" --layout "$layout" >>"$LOG" 2>&1 < /dev/null &
            note "Video in caricamento nel visore (circa 10-20 secondi). Gamepad: A pausa, LB/RB -/+5 s, croce -/+30 s, X formato, Y ricentra." ;;
   stop)    note "GoVR chiuso. Audio di nuovo sul PC." ;;

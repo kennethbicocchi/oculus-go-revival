@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install-desktop.sh: KDE integration for daily use (no root):
 #  - "GoVR" control panel in the menu and on the desktop
-#  - menu entries (GoVR Desktop / SteamVR / No Man's Sky / Video VR / Stop / screen controls)
+#  - menu entries (GoVR Desktop / SteamVR / No Man's Sky / The Forest / Video VR / Stop / screen controls)
 #  - global shortcuts Meta+Alt+D/Q/C/+/-/Space/,/./F/M (only where free)
 #  - KWin screencast authorization for the capture helper (via install-kwin-capture.sh)
 set -euo pipefail
@@ -15,6 +15,7 @@ entry govr-panel "GoVR" video-display "python3 $ROOT/pc/govr_panel.py"
 entry govr-desktop "GoVR Desktop" video-display "$ROOT/scripts/govr-launch desktop"
 entry govr-vr "GoVR SteamVR" applications-games "$ROOT/scripts/govr-launch vr"
 entry govr-nms "GoVR No Man's Sky" applications-games "$ROOT/scripts/govr-launch nms"
+entry govr-forest "GoVR The Forest" applications-games "$ROOT/scripts/govr-launch forest"
 entry govr-youtube "GoVR Video VR" video-x-generic "$ROOT/scripts/govr-launch youtube"
 entry govr-stop "GoVR Stop" process-stop "$ROOT/scripts/govr-launch stop"
 for c in recenter:zoom-fit-best bigger:zoom-in smaller:zoom-out pause:media-playback-pause \

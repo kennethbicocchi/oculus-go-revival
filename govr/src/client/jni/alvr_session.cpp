@@ -29,6 +29,7 @@ struct AlvrApi {
     ALVR_FN(alvr_path_string_to_id)
     ALVR_FN(alvr_send_view_params)
     ALVR_FN(alvr_send_tracking)
+    ALVR_FN(alvr_send_button)
     ALVR_FN(alvr_send_battery)
     ALVR_FN(alvr_set_decoder_input_callback)
     ALVR_FN(alvr_report_frame_decoded)
@@ -60,6 +61,7 @@ struct AlvrApi {
         ALVR_FN(alvr_path_string_to_id)
         ALVR_FN(alvr_send_view_params)
         ALVR_FN(alvr_send_tracking)
+        ALVR_FN(alvr_send_button)
         ALVR_FN(alvr_send_battery)
         ALVR_FN(alvr_set_decoder_input_callback)
         ALVR_FN(alvr_report_frame_decoded)
@@ -104,6 +106,39 @@ bool AlvrSession::Init(JavaVM* vm, jobject activity, int eyeWidth, int eyeHeight
     caps.prefer_hdr = false;
     api_->alvr_initialize(caps);
     headId_ = api_->alvr_path_string_to_id("/user/head");
+    // Inputs of the Quest Touch profile, ALVR's default source profile (server: Quest2Touch).
+    rightHandId_ = api_->alvr_path_string_to_id("/user/hand/right");
+    leftHandId_ = api_->alvr_path_string_to_id("/user/hand/left");
+    using C = proto::VrControllers;
+    struct Def { const char* path; bool scalar, left; float (*value)(const C&); };
+    static const Def kInputs[] = {
+        {"/user/hand/right/input/trigger/value", true, false, [](const C& c) { return c.rtrigger; }},
+        {"/user/hand/right/input/trigger/touch", false, false, [](const C& c) { return c.rtrigger > 0.05f ? 1.f : 0.f; }},
+        {"/user/hand/right/input/squeeze/value", true, false, [](const C& c) { return c.rgrip; }},
+        {"/user/hand/right/input/a/click", false, false, [](const C& c) { return c.buttons & proto::VR_BTN_A ? 1.f : 0.f; }},
+        {"/user/hand/right/input/a/touch", false, false, [](const C& c) { return c.buttons & proto::VR_BTN_A ? 1.f : 0.f; }},
+        {"/user/hand/right/input/b/click", false, false, [](const C& c) { return c.buttons & proto::VR_BTN_B ? 1.f : 0.f; }},
+        {"/user/hand/right/input/b/touch", false, false, [](const C& c) { return c.buttons & proto::VR_BTN_B ? 1.f : 0.f; }},
+        {"/user/hand/right/input/system/click", false, false, [](const C& c) { return c.buttons & proto::VR_BTN_SYSTEM ? 1.f : 0.f; }},
+        {"/user/hand/right/input/thumbstick/x", true, false, [](const C& c) { return c.rx; }},
+        {"/user/hand/right/input/thumbstick/y", true, false, [](const C& c) { return c.ry; }},
+        {"/user/hand/right/input/thumbstick/click", false, false, [](const C& c) { return c.buttons & proto::VR_BTN_RSTICK ? 1.f : 0.f; }},
+        {"/user/hand/right/input/thumbstick/touch", false, false, [](const C& c) { return c.rx || c.ry || (c.buttons & proto::VR_BTN_RSTICK) ? 1.f : 0.f; }},
+        {"/user/hand/left/input/trigger/value", true, true, [](const C& c) { return c.ltrigger; }},
+        {"/user/hand/left/input/trigger/touch", false, true, [](const C& c) { return c.ltrigger > 0.05f ? 1.f : 0.f; }},
+        {"/user/hand/left/input/squeeze/value", true, true, [](const C& c) { return c.lgrip; }},
+        {"/user/hand/left/input/x/click", false, true, [](const C& c) { return c.buttons & proto::VR_BTN_X ? 1.f : 0.f; }},
+        {"/user/hand/left/input/x/touch", false, true, [](const C& c) { return c.buttons & proto::VR_BTN_X ? 1.f : 0.f; }},
+        {"/user/hand/left/input/y/click", false, true, [](const C& c) { return c.buttons & proto::VR_BTN_Y ? 1.f : 0.f; }},
+        {"/user/hand/left/input/y/touch", false, true, [](const C& c) { return c.buttons & proto::VR_BTN_Y ? 1.f : 0.f; }},
+        {"/user/hand/left/input/menu/click", false, true, [](const C& c) { return c.buttons & proto::VR_BTN_MENU ? 1.f : 0.f; }},
+        {"/user/hand/left/input/thumbstick/x", true, true, [](const C& c) { return c.lx; }},
+        {"/user/hand/left/input/thumbstick/y", true, true, [](const C& c) { return c.ly; }},
+        {"/user/hand/left/input/thumbstick/click", false, true, [](const C& c) { return c.buttons & proto::VR_BTN_LSTICK ? 1.f : 0.f; }},
+        {"/user/hand/left/input/thumbstick/touch", false, true, [](const C& c) { return c.lx || c.ly || (c.buttons & proto::VR_BTN_LSTICK) ? 1.f : 0.f; }},
+    };
+    for (const Def& d : kInputs)
+        inputs_.push_back({api_->alvr_path_string_to_id(d.path), d.scalar, d.left, d.value, 0.0f});
     char buf[256] = {};
     api_->alvr_protocol_id(buf);
     char host[256] = {};
@@ -254,7 +289,8 @@ void AlvrSession::SendTracking(const ovrTracking2& tracking, const ovrMatrix4f p
         api_->alvr_send_view_params(views);
         viewParamsSent_ = true;
     }
-    AlvrDeviceMotion head = {};
+    AlvrDeviceMotion motions[3] = {};
+    AlvrDeviceMotion& head = motions[0];
     head.device_id = headId_;
     const ovrRigidBodyPosef& hp = tracking.HeadPose;
     head.pose.orientation = {hp.Pose.Orientation.x, hp.Pose.Orientation.y, hp.Pose.Orientation.z,
@@ -267,8 +303,9 @@ void AlvrSession::SendTracking(const ovrTracking2& tracking, const ovrMatrix4f p
     head.angular_velocity[0] = hp.AngularVelocity.x;
     head.angular_velocity[1] = hp.AngularVelocity.y;
     head.angular_velocity[2] = hp.AngularVelocity.z;
+    const int controllers = SendControllers(hp.Pose, &motions[1]);
     const int64_t nowNs = NowNanos();
-    api_->alvr_send_tracking((uint64_t)nowNs, &head, 1, nullptr, nullptr);
+    api_->alvr_send_tracking((uint64_t)nowNs, motions, 1 + controllers, nullptr, nullptr);
     std::lock_guard<std::mutex> lock(sentMutex_);
     sent_[sentHead_] = {nowNs, hp.Pose.Orientation};
     sentHead_ = (sentHead_ + 1) % 512;
@@ -317,4 +354,149 @@ void AlvrSession::EndFrame(uint64_t timestampNs, double displayTimeS) {
     lastShownTs_ = timestampNs;
     const int64_t queue = (int64_t)(displayTimeS * 1e9) - NowNanos();
     api_->alvr_report_submit(timestampNs, queue > 0 ? (uint64_t)queue : 0);
+}
+
+// ---- Virtual controllers (gamepad on the PC)
+// The SteamVR dashboard, and the menus of games made for motion controllers, only accept
+// laser-pointer input from VR controllers, and the Go has none in SteamVR mode. While the PC
+// says so, a virtual right controller is sent: it sits low-right of the head and aims at the
+// point 2 m along the gaze (plus the stick offset), so the laser dot lands where the user looks.
+// In "VR controllers" mode a left controller joins (low-left, pointing forward) and every
+// gamepad input is forwarded to the two controllers (pc/vr_pointer.py has the mapping).
+
+namespace {
+struct V3 { float x, y, z; };
+V3 Rotate(const ovrQuatf& q, V3 v) {
+    // v' = v + 2w(u x v) + 2 u x (u x v)
+    const V3 u = {q.x, q.y, q.z};
+    const V3 t = {2 * (u.y * v.z - u.z * v.y), 2 * (u.z * v.x - u.x * v.z), 2 * (u.x * v.y - u.y * v.x)};
+    return {v.x + q.w * t.x + (u.y * t.z - u.z * t.y), v.y + q.w * t.y + (u.z * t.x - u.x * t.z),
+            v.z + q.w * t.z + (u.x * t.y - u.y * t.x)};
+}
+ovrQuatf Mul(const ovrQuatf& a, const ovrQuatf& b) {
+    return {a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+            a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
+}
+ovrQuatf AxisAngle(V3 axis, float a) {
+    const float s = sinf(a / 2);
+    return {axis.x * s, axis.y * s, axis.z * s, cosf(a / 2)};
+}
+V3 Norm(V3 v) {
+    const float l = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
+    return l > 1e-6f ? V3{v.x / l, v.y / l, v.z / l} : V3{0, 0, -1};
+}
+V3 Cross(V3 a, V3 b) { return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x}; }
+// Orientation whose -Z axis points along `fwd`, with +Y as close to world up as possible.
+ovrQuatf LookRotation(V3 fwd) {
+    const V3 z = {-fwd.x, -fwd.y, -fwd.z};
+    const V3 x = Norm(Cross({0, 1, 0}, z));
+    const V3 y = Cross(z, x);
+    const float m00 = x.x, m11 = y.y, m22 = z.z, tr = m00 + m11 + m22;
+    ovrQuatf q;
+    if (tr > 0) {
+        const float s = sqrtf(tr + 1) * 2;
+        q = {(y.z - z.y) / s, (z.x - x.z) / s, (x.y - y.x) / s, 0.25f * s};
+    } else if (m00 > m11 && m00 > m22) {
+        const float s = sqrtf(1 + m00 - m11 - m22) * 2;
+        q = {0.25f * s, (y.x + x.y) / s, (z.x + x.z) / s, (y.z - z.y) / s};
+    } else if (m11 > m22) {
+        const float s = sqrtf(1 + m11 - m00 - m22) * 2;
+        q = {(y.x + x.y) / s, 0.25f * s, (z.y + y.z) / s, (z.x - x.z) / s};
+    } else {
+        const float s = sqrtf(1 + m22 - m00 - m11) * 2;
+        q = {(z.x + x.z) / s, (z.y + y.z) / s, 0.25f * s, (x.y - y.x) / s};
+    }
+    return q;
+}
+// SteamVR draws the laser from the controller model's "tip" component, which the Quest 2 model
+// (oculus_quest2_controller_right.json, ALVR's Quest2Touch emulation) tilts by -37.4 deg about X
+// relative to the pose ALVR reports: pitch the pose up by as much so the laser runs along the aim.
+constexpr float kAimPitchFix = 37.4f * 3.14159265f / 180.0f;
+constexpr float kAimDistance = 2.0f;           // m, about where SteamVR places the dashboard
+constexpr int64_t kPointerTimeoutNs = 500 * 1000000LL;  // PC silent -> controller off
+}  // namespace
+
+void AlvrSession::SetControllers(const proto::VrControllers& c) {
+    std::lock_guard<std::mutex> lock(controllersMutex_);
+    controllers_ = c;
+    controllersAtNs_ = NowNanos();
+}
+
+int AlvrSession::SendControllers(const ovrPosef& head, AlvrDeviceMotion* out) {
+    proto::VrControllers c;
+    {
+        std::lock_guard<std::mutex> lock(controllersMutex_);
+        c = controllers_;
+        if (NowNanos() - controllersAtNs_ > kPointerTimeoutNs) c = {};
+    }
+    const bool right = c.flags & 1, left = right && (c.flags & 2);
+    if (leftWasActive_ && !left) SendControllerInputs({}, true);  // release before it disappears
+    leftWasActive_ = left;
+    if (!right) {
+        if (controllerFrames_) {
+            SendControllerInputs({}, false);
+            controllerFrames_ = 0;
+            LOGI("alvr: virtual controllers off");
+        }
+        return 0;
+    }
+    if (!controllerFrames_) LOGI("alvr: virtual controllers on (left %d)", left);
+    const ovrQuatf& hq = head.Orientation;
+    const V3 hp = {head.Position.x, head.Position.y, head.Position.z};
+    // Aim: gaze rotated by the stick offset (yaw about the head's up, then pitch).
+    const ovrQuatf off = Mul(AxisAngle({0, 1, 0}, -c.yaw), AxisAngle({1, 0, 0}, c.pitch));
+    const V3 dir = Rotate(Mul(hq, off), {0, 0, -1});
+    const V3 target = {hp.x + dir.x * kAimDistance, hp.y + dir.y * kAimDistance, hp.z + dir.z * kAimDistance};
+    // Hands: low in front of the body, following only the head's yaw. Looking almost straight
+    // down (or up) the forward vector has no usable yaw: take it from the head's up vector.
+    V3 f = Rotate(hq, {0, 0, -1});
+    if (f.x * f.x + f.z * f.z < 0.1f) {
+        const V3 up = Rotate(hq, {0, 1, 0});
+        f = f.y < 0 ? up : V3{-up.x, -up.y, -up.z};
+    }
+    const float yaw = atan2f(-f.x, -f.z);
+    const ovrQuatf yawOnly = AxisAngle({0, 1, 0}, yaw);
+    auto motion = [&](uint64_t id, V3 offset, ovrQuatf q) {
+        const V3 o = Rotate(yawOnly, offset);
+        AlvrDeviceMotion m = {};
+        m.device_id = id;
+        m.pose.orientation = {q.x, q.y, q.z, q.w};
+        m.pose.position[0] = hp.x + o.x;
+        m.pose.position[1] = hp.y + o.y;
+        m.pose.position[2] = hp.z + o.z;
+        return m;
+    };
+    const V3 rightAt = Rotate(yawOnly, {0.18f, -0.35f, -0.25f});
+    const V3 hand = {hp.x + rightAt.x, hp.y + rightAt.y, hp.z + rightAt.z};
+    out[0] = motion(rightHandId_, {0.18f, -0.35f, -0.25f},
+                    Mul(LookRotation(Norm({target.x - hand.x, target.y - hand.y, target.z - hand.z})),
+                        AxisAngle({1, 0, 0}, kAimPitchFix)));
+    int n = 1;
+    if (left)  // pointing forward, slightly down
+        out[n++] = motion(leftHandId_, {-0.18f, -0.35f, -0.25f},
+                          Mul(yawOnly, AxisAngle({1, 0, 0}, kAimPitchFix - 0.35f)));
+    // The server ignores buttons until the controller pose is valid: give it a few frames.
+    if (++controllerFrames_ > 5) {
+        SendControllerInputs(c, false);
+        if (left) SendControllerInputs(c, true);
+    }
+    return n;
+}
+
+void AlvrSession::SendControllerInputs(const proto::VrControllers& c, bool left) {
+    for (Input& in : inputs_) {
+        if (in.left != left) continue;
+        const float v = in.value(c);
+        if (v == in.sent) continue;
+        in.sent = v;
+        AlvrButtonValue b = {};
+        if (in.scalar) {
+            b.tag = ALVR_BUTTON_VALUE_SCALAR;
+            b.scalar = v;
+        } else {
+            b.tag = ALVR_BUTTON_VALUE_BINARY;
+            b.binary = v != 0;
+        }
+        api_->alvr_send_button(in.id, b);
+    }
 }

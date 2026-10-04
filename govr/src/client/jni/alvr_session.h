@@ -14,8 +14,10 @@
 
 #include "VrApi_Types.h"
 #include "decoder.h"
+#include "protocol.h"
 
 struct AlvrApi;
+struct AlvrDeviceMotion;
 
 class AlvrSession {
 public:
@@ -40,6 +42,9 @@ public:
     // Returns true and fills `out` if a decoded frame is available to present.
     bool BeginFrame(FrameToShow* out);
     void EndFrame(uint64_t timestampNs, double displayTimeS);
+
+    // Network thread: latest virtual controller state from the PC (protocol VR_POINTER).
+    void SetControllers(const proto::VrControllers& c);
 
     bool Streaming() const { return streaming_; }
     ovrTextureSwapChain* Swapchain() const { return chain_; }
@@ -82,4 +87,24 @@ private:
     std::mutex sentMutex_;
     ovrQuatf OrientationSentAt(int64_t timeNs);
     std::atomic<uint32_t> lastDecodeUs_{0};
+
+    // Virtual controllers driven by the PC's gamepad: the right one is the SteamVR dashboard /
+    // game menu pointer, the left one joins when the gamepad is used as a pair of VR controllers.
+    // They are connected only while the PC says so, so games otherwise see just the gamepad.
+    // Returns how many device motions were written to `out` (0..2).
+    int SendControllers(const ovrPosef& head, AlvrDeviceMotion* out);
+    void SendControllerInputs(const proto::VrControllers& c, bool left);
+    struct Input {
+        uint64_t id;
+        bool scalar, left;
+        float (*value)(const proto::VrControllers&);
+        float sent;
+    };
+    std::vector<Input> inputs_;
+    std::mutex controllersMutex_;
+    proto::VrControllers controllers_ = {};
+    int64_t controllersAtNs_ = 0;
+    int controllerFrames_ = 0;        // consecutive frames with the controller poses sent
+    bool leftWasActive_ = false;
+    uint64_t rightHandId_ = 0, leftHandId_ = 0;
 };
